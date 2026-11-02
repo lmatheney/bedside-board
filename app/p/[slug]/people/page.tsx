@@ -91,8 +91,8 @@ export default async function PeoplePage({
   if (loaded.kind !== "ready") redirect(`/p/${slug}`);
   if (!canManagePeople(loaded.member.role)) redirect(`/p/${slug}`);
 
-  const members = listMembers(loaded.page.id);
-  const activity = loaded.member.role === "owner" ? listActivity(loaded.page.id) : [];
+  const members = await listMembers(loaded.page.id);
+  const activity = loaded.member.role === "owner" ? await listActivity(loaded.page.id) : [];
   const origin = await requestOrigin();
   const groups: Role[] = ["owner", "mod", "inner", "wider"];
 

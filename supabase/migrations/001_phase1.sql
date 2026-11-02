@@ -6,8 +6,7 @@
 -- Phone numbers stay in Supabase Auth. This script does not copy them
 -- onto follower-visible tables.
 -- Run it in the Supabase SQL editor, or with the Supabase CLI, after
--- phone auth is enabled. The app currently uses a local database with
--- the same split until this project is connected.
+-- phone auth is enabled. Then run 002_app_functions.sql.
 
 create extension if not exists pgcrypto;
 
@@ -281,7 +280,7 @@ begin
   end if;
   loop
     tries := tries + 1;
-    new_slug := substr(regexp_replace(encode(gen_random_bytes(12), 'base64'), '[^a-zA-Z0-9]', '', 'g'), 1, 12);
+    new_slug := substr(regexp_replace(encode(extensions.gen_random_bytes(12), 'base64'), '[^a-zA-Z0-9]', '', 'g'), 1, 12);
     exit when char_length(new_slug) >= 8 and not exists (select 1 from care_pages where slug = new_slug);
     if tries > 5 then
       raise exception 'could not create a page';
@@ -350,8 +349,9 @@ begin
   delete from members where id = target.id;
   insert into activity_log (page_id, actor, action, target)
   values (p_page, auth.uid(), 'removed someone', target.display_name);
-  -- The caller must also revoke live tokens:
-  -- auth.admin.signOut(target.user_id, 'global') from the server.
+  -- Membership is checked on every request, so access ends right here.
+  -- The server then calls revoke_sessions_if_orphaned (see 002) to end
+  -- the person's sign-ins when they have no other page.
   return target.user_id;
 end;
 $$;
@@ -403,7 +403,9 @@ as $$
 declare
   new_id uuid := gen_random_uuid();
 begin
-  if app_member_role(p_page) not in ('owner', 'mod') then
+  -- coalesce: a non-member has a null role, and "null not in (...)" is null,
+  -- which would let the check pass.
+  if coalesce(app_member_role(p_page), '') not in ('owner', 'mod') then
     raise exception 'not allowed';
   end if;
   if p_status not in ('improving', 'stable', 'declining', 'procedure', 'critical') then

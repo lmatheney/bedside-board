@@ -36,8 +36,8 @@ export default async function CarePage({
 
   const { page, member } = loaded;
   const { role, preview } = viewRole(member.role, query.view);
-  const latest = latestUpdate(page.id, role);
-  const reactions = reactionsFor(page.id, latest ? [latest.id] : [], member.userId);
+  const latest = await latestUpdate(page.id, role);
+  const reactions = await reactionsFor(page.id, latest ? [latest.id] : [], member.userId);
   const origin = await requestOrigin();
   const links = preview
     ? [{ href: `/p/${slug}/history?view=wider`, label: "History" }]
@@ -55,7 +55,7 @@ export default async function CarePage({
         latest={latest}
         reactions={reactions.get(latest?.id ?? "") ?? { groups: [], mine: null }}
         preview={preview}
-        newestHidden={canPost(member.role) && !preview && newestUpdateIsHidden(page.id)}
+        newestHidden={canPost(member.role) && !preview && (await newestUpdateIsHidden(page.id))}
         error={query.error}
         pageUrl={`${origin}/p/${slug}`}
       />

@@ -8,22 +8,25 @@ import {
   changeTier,
   createPage,
   editUpdate,
-  getPageBySlug,
   handOff,
+  pageIdForSlug,
   publishUpdate,
   quickCheckIn,
   removePerson,
   requestLoginCode,
+  requestOwnerCode,
   setHidden,
   setPinnedNote,
   setReaction,
   verifyLoginCode,
+  verifyOwnerCode,
 } from "@/lib/data";
 import { ActionError } from "@/lib/errors";
 import { allows, loadPage } from "@/lib/guard";
+import { hashesMatch, sha256 } from "@/lib/hash";
 import { isSlug, slugFromInput } from "@/lib/slug";
 import { canManagePeople, canPost } from "@/lib/status";
-import { clearSession, createSession, setSessionCookie } from "@/lib/session";
+import { clearSession } from "@/lib/session";
 import type { CurrentMember, FormState, PublishInput } from "@/lib/types";
 
 function field(formData: FormData, name: string): string {
@@ -72,40 +75,63 @@ function returnPath(slug: string, value: string): string {
   }
 }
 
-export async function createCarePage(_prev: FormState, formData: FormData): Promise<FormState> {
-  let slug = "";
+/**
+ * Starting a page sends a text, so it's gated by a setup code that only the
+ * person running this site knows. Without it, anyone who found the site
+ * could make it text strangers.
+ */
+function assertSetupCode(given: string): void {
+  const expected = process.env.BEDSIDE_SETUP_CODE;
+  if (!expected) throw new ActionError("Starting a page isn't turned on for this site.");
+  if (!hashesMatch(sha256(given.trim()), sha256(expected))) throw new ActionError("That setup code isn't right.");
+}
+
+export type CreateInput = { patient: string; name: string; phone: string; setupCode: string };
+
+export async function startCarePage(
+  input: CreateInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    const created = createPage({
-      patientFirstName: field(formData, "patient"),
-      ownerName: field(formData, "name"),
-      phone: field(formData, "phone"),
-    });
-    slug = created.slug;
-    await setSessionCookie(createSession(created.userId));
+    assertSetupCode(input.setupCode);
+    if (!input.patient.trim()) throw new ActionError("Enter the patient's first name.");
+    if (!input.name.trim()) throw new ActionError("Enter your name.");
+    await requestOwnerCode(input.phone);
+    return { ok: true };
   } catch (error) {
-    if (error instanceof ActionError) return { error: error.message };
-    throw error;
+    return failure(error);
   }
-  redirect(`/p/${slug}`);
+}
+
+export async function createCarePage(
+  input: CreateInput & { code: string },
+): Promise<{ ok: true; slug: string } | { ok: false; error: string }> {
+  try {
+    assertSetupCode(input.setupCode);
+    await verifyOwnerCode(input.phone, input.code);
+    const created = await createPage({ patientFirstName: input.patient, ownerName: input.name });
+    return { ok: true, slug: created.slug };
+  } catch (error) {
+    return failure(error);
+  }
 }
 
 export async function openExistingPage(_prev: FormState, formData: FormData): Promise<FormState> {
   const slug = slugFromInput(field(formData, "link"));
   if (!slug) return { error: "Paste the page link." };
-  if (!getPageBySlug(slug)) return { error: "That link doesn't match a page." };
+  if (!(await pageIdForSlug(slug))) return { error: "That link doesn't match a page." };
   redirect(`/p/${slug}`);
 }
 
 export async function requestCode(
   slug: string,
   phone: string,
-): Promise<{ ok: true; devCode?: string } | { ok: false; error: string }> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     if (!isSlug(slug)) return { ok: false, error: "This page doesn't exist." };
-    const page = getPageBySlug(slug);
-    if (!page) return { ok: false, error: "This page doesn't exist." };
-    const result = requestLoginCode(page.id, phone);
-    return { ok: true, devCode: result.devCode };
+    const pageId = await pageIdForSlug(slug);
+    if (!pageId) return { ok: false, error: "This page doesn't exist." };
+    await requestLoginCode(pageId, phone);
+    return { ok: true };
   } catch (error) {
     return failure(error);
   }
@@ -118,10 +144,9 @@ export async function verifyCode(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     if (!isSlug(slug)) return { ok: false, error: "This page doesn't exist." };
-    const page = getPageBySlug(slug);
-    if (!page) return { ok: false, error: "This page doesn't exist." };
-    const userId = verifyLoginCode(page.id, phone, code);
-    await setSessionCookie(createSession(userId));
+    const pageId = await pageIdForSlug(slug);
+    if (!pageId) return { ok: false, error: "This page doesn't exist." };
+    await verifyLoginCode(pageId, phone, code);
     return { ok: true };
   } catch (error) {
     return failure(error);
@@ -141,8 +166,8 @@ export async function saveUpdate(
   try {
     const { pageId, member } = await readyMember(slug);
     if (!canPost(member.role)) throw new ActionError("You can't post on this page.");
-    if (input.updateId) editUpdate(pageId, member, input.updateId, input);
-    else publishUpdate(pageId, member, input);
+    if (input.updateId) await editUpdate(pageId, member, input.updateId, input);
+    else await publishUpdate(pageId, member, input);
     revalidatePath(`/p/${slug}`);
     return { ok: true };
   } catch (error) {
@@ -154,7 +179,7 @@ export async function markNoChange(formData: FormData): Promise<void> {
   const slug = field(formData, "slug");
   try {
     const { pageId, member } = await readyMember(slug);
-    quickCheckIn(pageId, member, "no_change");
+    await quickCheckIn(pageId, member, "no_change");
   } catch (error) {
     if (error instanceof ActionError) redirect(pagePath(slug, error.message));
     throw error;
@@ -166,7 +191,7 @@ export async function markStillInSurgery(formData: FormData): Promise<void> {
   const slug = field(formData, "slug");
   try {
     const { pageId, member } = await readyMember(slug);
-    quickCheckIn(pageId, member, "still_in_surgery");
+    await quickCheckIn(pageId, member, "still_in_surgery");
   } catch (error) {
     if (error instanceof ActionError) redirect(pagePath(slug, error.message));
     throw error;
@@ -178,7 +203,7 @@ export async function savePinnedNote(formData: FormData): Promise<void> {
   const slug = field(formData, "slug");
   try {
     const { pageId, member } = await readyMember(slug);
-    setPinnedNote(pageId, member, field(formData, "pinnedNote"));
+    await setPinnedNote(pageId, member, field(formData, "pinnedNote"));
   } catch (error) {
     if (error instanceof ActionError) redirect(pagePath(slug, error.message));
     throw error;
@@ -191,7 +216,7 @@ export async function addPersonAction(formData: FormData): Promise<void> {
   try {
     const { pageId, member } = await readyMember(slug);
     if (!canManagePeople(member.role)) throw new ActionError("You can't add people.");
-    addPerson(pageId, member, field(formData, "name"), field(formData, "phone"), field(formData, "role"));
+    await addPerson(pageId, member, field(formData, "name"), field(formData, "phone"), field(formData, "role"));
   } catch (error) {
     if (error instanceof ActionError) redirect(peoplePath(slug, error.message));
     throw error;
@@ -204,7 +229,7 @@ export async function addPeopleAction(formData: FormData): Promise<void> {
   try {
     const { pageId, member } = await readyMember(slug);
     if (!canManagePeople(member.role)) throw new ActionError("You can't add people.");
-    addPeople(pageId, member, field(formData, "list"), field(formData, "role"));
+    await addPeople(pageId, member, field(formData, "list"), field(formData, "role"));
   } catch (error) {
     if (error instanceof ActionError) redirect(peoplePath(slug, error.message));
     throw error;
@@ -216,7 +241,7 @@ export async function removePersonAction(formData: FormData): Promise<void> {
   const slug = field(formData, "slug");
   try {
     const { pageId, member } = await readyMember(slug);
-    removePerson(pageId, member, field(formData, "memberId"));
+    await removePerson(pageId, member, field(formData, "memberId"));
   } catch (error) {
     if (error instanceof ActionError) redirect(peoplePath(slug, error.message));
     throw error;
@@ -228,7 +253,7 @@ export async function changeTierAction(formData: FormData): Promise<void> {
   const slug = field(formData, "slug");
   try {
     const { pageId, member } = await readyMember(slug);
-    changeTier(pageId, member, field(formData, "memberId"), field(formData, "role"));
+    await changeTier(pageId, member, field(formData, "memberId"), field(formData, "role"));
   } catch (error) {
     if (error instanceof ActionError) redirect(peoplePath(slug, error.message));
     throw error;
@@ -241,7 +266,7 @@ export async function handOffAction(formData: FormData): Promise<void> {
   try {
     const { pageId, member } = await readyMember(slug);
     if (!allows(member, ["owner"])) throw new ActionError("Only the owner can hand this page off.");
-    handOff(pageId, member, field(formData, "memberId"));
+    await handOff(pageId, member, field(formData, "memberId"));
   } catch (error) {
     if (error instanceof ActionError) redirect(peoplePath(slug, error.message));
     throw error;
@@ -253,7 +278,7 @@ export async function setUpdateHidden(formData: FormData): Promise<void> {
   const slug = field(formData, "slug");
   try {
     const { pageId, member } = await readyMember(slug);
-    setHidden(pageId, member, field(formData, "updateId"), field(formData, "hidden") === "1");
+    await setHidden(pageId, member, field(formData, "updateId"), field(formData, "hidden") === "1");
   } catch (error) {
     if (error instanceof ActionError) redirect(historyPath(slug, error.message));
     throw error;
@@ -266,7 +291,7 @@ export async function reactToUpdate(formData: FormData): Promise<void> {
   const back = returnPath(slug, field(formData, "returnTo"));
   try {
     const { pageId, member } = await readyMember(slug);
-    setReaction(pageId, member, field(formData, "updateId"), field(formData, "kind"));
+    await setReaction(pageId, member, field(formData, "updateId"), field(formData, "kind"));
     revalidatePath(`/p/${slug}`);
     revalidatePath(`/p/${slug}/history`);
   } catch (error) {

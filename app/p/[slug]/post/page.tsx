@@ -20,7 +20,7 @@ export default async function PostPage({
   if (loaded.kind !== "ready") redirect(`/p/${slug}`);
   if (!canPost(loaded.member.role)) redirect(`/p/${slug}`);
 
-  const existing = updateId ? getEditableUpdate(loaded.page.id, updateId) : null;
+  const existing = updateId ? await getEditableUpdate(loaded.page.id, updateId) : null;
   if (updateId && !existing) {
     return (
       <Shell links={[{ href: `/p/${slug}`, label: "Page" }]}>

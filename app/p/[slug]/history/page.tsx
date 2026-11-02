@@ -21,8 +21,8 @@ export default async function HistoryPage({
 
   const { page, member } = loaded;
   const { role, preview } = viewRole(member.role, query.view);
-  const updates = listUpdates(page.id, role, canPost(member.role) && !preview);
-  const reactions = reactionsFor(
+  const updates = await listUpdates(page.id, role, canPost(member.role) && !preview);
+  const reactions = await reactionsFor(
     page.id,
     updates.map((update) => update.id),
     member.userId,

@@ -11,7 +11,6 @@ export function SignIn({ slug }: { slug: string }) {
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"phone" | "code">("phone");
   const [error, setError] = useState<string | null>(null);
-  const [devCode, setDevCode] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pretty = normalizePhone(phone);
 
@@ -25,7 +24,6 @@ export function SignIn({ slug }: { slug: string }) {
       setError(result.error);
       return;
     }
-    setDevCode(result.devCode ?? null);
     setStep("code");
   }
 
@@ -76,12 +74,6 @@ export function SignIn({ slug }: { slug: string }) {
             </p>
           )}
           <p>Code for {pretty ? formatPhone(pretty) : phone}</p>
-          {devCode && (
-            <p className="dev-code">
-              Texting isn't turned on yet, so here is your code.
-              <strong>{devCode}</strong>
-            </p>
-          )}
           <label className="field">
             6-digit code
             <input
@@ -105,7 +97,6 @@ export function SignIn({ slug }: { slug: string }) {
               setStep("phone");
               setCode("");
               setError(null);
-              setDevCode(null);
             }}
           >
             Use a different number
