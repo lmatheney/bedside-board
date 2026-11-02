@@ -1,0 +1,21 @@
+{
+  "name": "bedside-updates",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/with-sqlite.mjs dev",
+    "build": "node scripts/with-sqlite.mjs build",
+    "start": "node scripts/with-sqlite.mjs start"
+  },
+  "dependencies": {
+    "next": "^16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}
