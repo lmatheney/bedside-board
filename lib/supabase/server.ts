@@ -8,7 +8,7 @@ import { SESSION_MAX_AGE_SECONDS, supabasePublishableKey, supabaseUrl } from "@/
  * A client that acts as the signed-in person. Row-level security applies,
  * so it can only read what that person is allowed to read.
  *
- * One per request (React cache), so a session created by verifyOtp is
+ * One per request (React cache), so a session created by exchangeCodeForSession is
  * already in memory for the rest of the same request.
  */
 export const createServerSupabase = cache(async () => {

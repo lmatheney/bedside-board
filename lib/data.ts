@@ -1,7 +1,7 @@
 import "server-only";
 import { ActionError } from "@/lib/errors";
 import { cleanName } from "@/lib/names";
-import { normalizePhone } from "@/lib/phone";
+import { normalizeEmail } from "@/lib/email";
 import { presetById, presetLabel } from "@/lib/presets";
 import { isReactionKind } from "@/lib/reactions";
 import { canPost, canSeeInner, isStatus } from "@/lib/status";
@@ -59,7 +59,7 @@ type MemberRow = {
   user_id: string;
   display_name: string;
   role: string;
-  phone: string;
+  email: string;
   created_at: string;
 };
 
@@ -118,7 +118,7 @@ function mapMember(row: MemberRow): ListedMember {
     userId: row.user_id,
     displayName: row.display_name,
     role: asRole(row.role),
-    phone: row.phone,
+    email: row.email,
     createdAt: row.created_at,
   };
 }
@@ -245,42 +245,43 @@ function cleanPost(input: PublishInput) {
   };
 }
 
-function requirePerson(rawName: string, rawPhone: string): { name: string; phone: string } {
+function requirePerson(rawName: string, rawEmail: string): { name: string; email: string } {
   const name = cleanName(rawName);
-  const phone = normalizePhone(rawPhone);
+  const email = normalizeEmail(rawEmail);
   if (!name) throw new ActionError("Enter a name.");
-  if (!phone) throw new ActionError("Enter a US mobile number.");
-  return { name, phone };
+  if (!email) throw new ActionError("Enter a valid email address.");
+  return { name, email };
 }
 
-function parsePeopleList(text: string): { name: string; phone: string }[] {
+function parsePeopleList(text: string): { name: string; email: string }[] {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 0) throw new ActionError("Add at least one name and number.");
+  if (lines.length === 0) throw new ActionError("Add at least one name and email.");
   if (lines.length > 40) throw new ActionError("Add up to 40 people at a time.");
-  const people: { name: string; phone: string }[] = [];
+  const people: { name: string; email: string }[] = [];
   const seen = new Set<string>();
   for (const line of lines) {
     let nameRaw = "";
-    let phoneRaw = "";
+    let emailRaw = "";
     const parts = line.split(/[,\t|]/).map((part) => part.trim()).filter(Boolean);
     if (parts.length >= 2) {
-      phoneRaw = parts[parts.length - 1] ?? "";
+      emailRaw = parts[parts.length - 1] ?? "";
       nameRaw = parts.slice(0, -1).join(" ");
     } else {
-      const match = line.match(/^(.*?)(\+?\d[\d\s().-]{8,}\d)\s*$/);
+      // "Sam Rivera sam@example.com", with no separator.
+      const match = line.match(/^(.*?)\s*(<?[^\s<>@]+@[^\s<>@]+>?)\s*$/);
       if (match) {
         nameRaw = match[1]?.trim() ?? "";
-        phoneRaw = match[2] ?? "";
+        emailRaw = (match[2] ?? "").replace(/^<|>$/g, "");
       }
     }
     const name = cleanName(nameRaw);
-    const phone = normalizePhone(phoneRaw);
-    if (!name || !phone) {
-      throw new ActionError(`Couldn't read "${line.slice(0, 80)}". Use one person per line: Name, phone`);
+    const email = normalizeEmail(emailRaw);
+    if (!name || !email) {
+      throw new ActionError(`Couldn't read "${line.slice(0, 80)}". Use one person per line: Name, email`);
     }
-    if (seen.has(phone)) throw new ActionError(`${name} is listed twice.`);
-    seen.add(phone);
-    people.push({ name, phone });
+    if (seen.has(email)) throw new ActionError(`${name} is listed twice.`);
+    seen.add(email);
+    people.push({ name, email });
   }
   return people;
 }
@@ -471,69 +472,69 @@ export async function listActivity(pageId: string): Promise<ActivityEntry[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Sign-in. Supabase Auth sends and checks the 6-digit code.
+// Sign-in. Supabase Auth emails a one-time link. The link lands on
+// /auth/callback, which trades the link's code for a session.
 // ---------------------------------------------------------------------------
 
-async function sendOtp(phone: string): Promise<void> {
+async function sendLink(email: string, redirectTo: string): Promise<void> {
   const supabase = await createServerSupabase();
-  // Never creates an account: Supabase only texts numbers that already have one.
-  const { error } = await supabase.auth.signInWithOtp({ phone, options: { shouldCreateUser: false } });
+  // Never creates an account: Supabase only emails addresses that already have one.
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: false, emailRedirectTo: redirectTo },
+  });
   if (!error) return;
-  if (error.status === 429 || error.code === "over_sms_send_rate_limit" || error.code === "over_request_rate_limit") {
-    throw new ActionError("Wait a minute before asking for another code.");
+  if (error.status === 429 || error.code === "over_email_send_rate_limit" || error.code === "over_request_rate_limit") {
+    throw new ActionError("Wait a minute before asking for another link.");
   }
-  console.error("Could not send sign-in code", error);
-  throw new ActionError("We couldn't send a code. Try again in a minute.");
+  console.error("Could not send sign-in link", error);
+  throw new ActionError("We couldn't send the email. Try again in a minute.");
 }
 
-async function verifyOtp(phone: string, code: string): Promise<string> {
-  if (!/^\d{6}$/.test(code)) throw new ActionError("Enter the 6-digit code.");
-  const supabase = await createServerSupabase();
-  const { data, error } = await supabase.auth.verifyOtp({ phone, token: code, type: "sms" });
-  if (error || !data.user) {
-    throw new ActionError("That code didn't work. It may have expired, so ask for a new one.");
-  }
-  return data.user.id;
-}
-
-/** Only numbers already on the page get a code. Nothing is sent to anyone else. */
-export async function requestLoginCode(pageId: string, rawPhone: string): Promise<void> {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) throw new ActionError("Enter a US mobile number.");
-  const { data, error } = await createAdminSupabase().rpc("page_member_for_phone", { p_page: pageId, p_phone: phone });
+/** Only addresses already on the page get a link. Nothing is sent to anyone else. */
+export async function requestLoginLink(pageId: string, rawEmail: string, redirectTo: string): Promise<void> {
+  const email = normalizeEmail(rawEmail);
+  if (!email) throw new ActionError("Enter a valid email address.");
+  const { data, error } = await createAdminSupabase().rpc("page_member_for_email", { p_page: pageId, p_email: email });
   check(error);
-  if (!data) throw new ActionError("That number isn't on this page. Ask a caregiver to add you.");
-  await sendOtp(phone);
-}
-
-export async function verifyLoginCode(pageId: string, rawPhone: string, rawCode: string): Promise<void> {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) throw new ActionError("Enter a US mobile number.");
-  const userId = await verifyOtp(phone, rawCode.trim());
-  if (!(await getMember(pageId, userId))) {
-    const supabase = await createServerSupabase();
-    await supabase.auth.signOut();
-    throw new ActionError("You don't have access to this page.");
-  }
+  if (!data) throw new ActionError("That email isn't on this page. Ask a caregiver to add you.");
+  await sendLink(email, redirectTo);
 }
 
 /**
- * Step 1 of starting a page: prove the owner's number. Sign-ups are off in
- * Supabase, so the account is made here (the caller has already shown the
- * setup code) and only then is the code texted.
+ * Sign-ups are off in Supabase, so starting a page makes the owner's account
+ * here (the caller has already checked the setup code) and then emails the link.
  */
-export async function requestOwnerCode(rawPhone: string): Promise<void> {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) throw new ActionError("Enter a US mobile number.");
-  await ensureAccounts([{ name: "the owner", phone }]);
-  await sendOtp(phone);
+export async function requestOwnerLink(rawEmail: string, redirectTo: string): Promise<string> {
+  const email = normalizeEmail(rawEmail);
+  if (!email) throw new ActionError("Enter a valid email address.");
+  await ensureAccounts([{ name: "the owner", email }]);
+  await sendLink(email, redirectTo);
+  return email;
 }
 
-/** Step 2 of starting a page: this signs the owner in. */
-export async function verifyOwnerCode(rawPhone: string, rawCode: string): Promise<void> {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) throw new ActionError("Enter a US mobile number.");
-  await verifyOtp(phone, rawCode.trim());
+/**
+ * Trades the code from the emailed link for a session. This only works in
+ * the browser that asked for the link, which is what keeps a forwarded or
+ * pre-scanned link from signing anyone in.
+ */
+export async function exchangeLinkCode(code: string): Promise<{ userId: string; email: string | null }> {
+  const supabase = await createServerSupabase();
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+  if (error || !data.user) {
+    throw new ActionError(
+      "That link didn't work. It may have expired, or been opened in a different browser. Ask for a new one.",
+    );
+  }
+  return { userId: data.user.id, email: data.user.email ?? null };
+}
+
+/** After the link is used: only people on this page stay signed in. */
+export async function finishLogin(pageId: string, userId: string): Promise<void> {
+  if (await getMember(pageId, userId)) return;
+  const supabase = await createServerSupabase();
+  await supabase.auth.signOut();
+  throw new ActionError("You don't have access to this page.");
 }
 
 // ---------------------------------------------------------------------------
@@ -617,23 +618,23 @@ export async function setReaction(pageId: string, _actor: CurrentMember, updateI
 }
 
 /**
- * Followers don't have accounts until a mod adds them, so each number gets
- * a sign-in account here. It is already confirmed: the code texted at
- * sign-in is what proves they hold the phone.
+ * Followers don't have accounts until a mod adds them, so each email gets
+ * a sign-in account here. It is already confirmed: the code emailed at
+ * sign-in is what proves they own the address.
  */
-async function ensureAccounts(people: { name: string; phone: string }[]): Promise<{ user_id: string; name: string }[]> {
+async function ensureAccounts(people: { name: string; email: string }[]): Promise<{ user_id: string; name: string }[]> {
   const admin = createAdminSupabase();
   const found: { user_id: string; name: string }[] = [];
   for (const person of people) {
-    let userId = await lookupAccount(person.phone);
+    let userId = await lookupAccount(person.email);
     if (!userId) {
-      const created = await admin.auth.admin.createUser({ phone: person.phone, phone_confirm: true });
+      const created = await admin.auth.admin.createUser({ email: person.email, email_confirm: true });
       if (created.error) {
         // Someone else may have just created it.
-        userId = await lookupAccount(person.phone);
+        userId = await lookupAccount(person.email);
         if (!userId) {
           console.error("Could not create account", created.error);
-          throw new ActionError(`Couldn't add ${person.name}. Check the number and try again.`);
+          throw new ActionError(`Couldn't add ${person.name}. Check the email address and try again.`);
         }
       } else {
         userId = created.data.user.id;
@@ -644,23 +645,23 @@ async function ensureAccounts(people: { name: string; phone: string }[]): Promis
   return found;
 }
 
-async function lookupAccount(phone: string): Promise<string | null> {
-  const { data, error } = await createAdminSupabase().rpc("auth_user_id_for_phone", { p_phone: phone });
+async function lookupAccount(email: string): Promise<string | null> {
+  const { data, error } = await createAdminSupabase().rpc("auth_user_id_for_email", { p_email: email });
   check(error);
   return (data as string | null) ?? null;
 }
 
-async function addToPage(pageId: string, people: { name: string; phone: string }[], role: Role): Promise<void> {
+async function addToPage(pageId: string, people: { name: string; email: string }[], role: Role): Promise<void> {
   const accounts = await ensureAccounts(people);
   const supabase = await createServerSupabase();
   const { error } = await supabase.rpc("add_members", { p_page: pageId, p_people: accounts, p_role: role });
   check(error);
 }
 
-export async function addPerson(pageId: string, actor: CurrentMember, rawName: string, rawPhone: string, role: string): Promise<void> {
+export async function addPerson(pageId: string, actor: CurrentMember, rawName: string, rawEmail: string, role: string): Promise<void> {
   const next = asRole(role);
   assertCanAdd(actor.role, next);
-  const person = requirePerson(rawName, rawPhone);
+  const person = requirePerson(rawName, rawEmail);
   await addToPage(pageId, [person], next);
 }
 

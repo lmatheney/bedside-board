@@ -1,26 +1,26 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import {
   addPeople,
   addPerson,
   changeTier,
-  createPage,
   editUpdate,
   handOff,
   pageIdForSlug,
   publishUpdate,
   quickCheckIn,
   removePerson,
-  requestLoginCode,
-  requestOwnerCode,
+  requestLoginLink,
+  requestOwnerLink,
   setHidden,
   setPinnedNote,
   setReaction,
-  verifyLoginCode,
-  verifyOwnerCode,
 } from "@/lib/data";
+import { requestOrigin } from "@/lib/origin";
+import { START_COOKIE, START_MAX_AGE_SECONDS, signStart } from "@/lib/startToken";
 import { ActionError } from "@/lib/errors";
 import { allows, loadPage } from "@/lib/guard";
 import { hashesMatch, sha256 } from "@/lib/hash";
@@ -76,9 +76,9 @@ function returnPath(slug: string, value: string): string {
 }
 
 /**
- * Starting a page sends a text, so it's gated by a setup code that only the
+ * Starting a page sends an email, so it's gated by a setup code that only the
  * person running this site knows. Without it, anyone who found the site
- * could make it text strangers.
+ * could make it email strangers.
  */
 function assertSetupCode(given: string): void {
   const expected = process.env.BEDSIDE_SETUP_CODE;
@@ -86,8 +86,12 @@ function assertSetupCode(given: string): void {
   if (!hashesMatch(sha256(given.trim()), sha256(expected))) throw new ActionError("That setup code isn't right.");
 }
 
-export type CreateInput = { patient: string; name: string; phone: string; setupCode: string };
+export type CreateInput = { patient: string; name: string; email: string; setupCode: string };
 
+/**
+ * Emails the owner a sign-in link. The page itself is made when they click
+ * it (see app/auth/callback/route.ts), using the details saved here.
+ */
 export async function startCarePage(
   input: CreateInput,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -95,21 +99,16 @@ export async function startCarePage(
     assertSetupCode(input.setupCode);
     if (!input.patient.trim()) throw new ActionError("Enter the patient's first name.");
     if (!input.name.trim()) throw new ActionError("Enter your name.");
-    await requestOwnerCode(input.phone);
+    const origin = await requestOrigin();
+    const email = await requestOwnerLink(input.email, `${origin}/auth/callback?flow=create`);
+    (await cookies()).set(START_COOKIE, signStart({ patient: input.patient, name: input.name, email }), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: START_MAX_AGE_SECONDS,
+      path: "/",
+    });
     return { ok: true };
-  } catch (error) {
-    return failure(error);
-  }
-}
-
-export async function createCarePage(
-  input: CreateInput & { code: string },
-): Promise<{ ok: true; slug: string } | { ok: false; error: string }> {
-  try {
-    assertSetupCode(input.setupCode);
-    await verifyOwnerCode(input.phone, input.code);
-    const created = await createPage({ patientFirstName: input.patient, ownerName: input.name });
-    return { ok: true, slug: created.slug };
   } catch (error) {
     return failure(error);
   }
@@ -122,31 +121,16 @@ export async function openExistingPage(_prev: FormState, formData: FormData): Pr
   redirect(`/p/${slug}`);
 }
 
-export async function requestCode(
+export async function requestSignInLink(
   slug: string,
-  phone: string,
+  email: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     if (!isSlug(slug)) return { ok: false, error: "This page doesn't exist." };
     const pageId = await pageIdForSlug(slug);
     if (!pageId) return { ok: false, error: "This page doesn't exist." };
-    await requestLoginCode(pageId, phone);
-    return { ok: true };
-  } catch (error) {
-    return failure(error);
-  }
-}
-
-export async function verifyCode(
-  slug: string,
-  phone: string,
-  code: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  try {
-    if (!isSlug(slug)) return { ok: false, error: "This page doesn't exist." };
-    const pageId = await pageIdForSlug(slug);
-    if (!pageId) return { ok: false, error: "This page doesn't exist." };
-    await verifyLoginCode(pageId, phone, code);
+    const origin = await requestOrigin();
+    await requestLoginLink(pageId, email, `${origin}/auth/callback?slug=${slug}`);
     return { ok: true };
   } catch (error) {
     return failure(error);
@@ -216,7 +200,7 @@ export async function addPersonAction(formData: FormData): Promise<void> {
   try {
     const { pageId, member } = await readyMember(slug);
     if (!canManagePeople(member.role)) throw new ActionError("You can't add people.");
-    await addPerson(pageId, member, field(formData, "name"), field(formData, "phone"), field(formData, "role"));
+    await addPerson(pageId, member, field(formData, "name"), field(formData, "email"), field(formData, "role"));
   } catch (error) {
     if (error instanceof ActionError) redirect(peoplePath(slug, error.message));
     throw error;

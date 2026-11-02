@@ -14,7 +14,6 @@ import {
 import { listActivity, listMembers } from "@/lib/data";
 import { loadPage } from "@/lib/guard";
 import { requestOrigin } from "@/lib/origin";
-import { formatPhone } from "@/lib/phone";
 import { ROLE_LABEL } from "@/lib/reactions";
 import { canManagePeople } from "@/lib/status";
 import type { CurrentMember, ListedMember, Role } from "@/lib/types";
@@ -30,7 +29,7 @@ function PersonRow({ slug, actor, person }: { slug: string; actor: CurrentMember
   return (
     <div className="person">
       <h3>{person.displayName}</h3>
-      <p className="phone">{formatPhone(person.phone)}</p>
+      <p className="email">{person.email}</p>
       <p className="small muted">{ROLE_LABEL[person.role]}</p>
       {actor.role === "owner" && person.role === "mod" && (
         <form action={handOffAction}>
@@ -66,7 +65,7 @@ function PersonRow({ slug, actor, person }: { slug: string; actor: CurrentMember
           <form action={removePersonAction} className="stack">
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="memberId" value={person.id} />
-            <p className="small">{person.displayName} loses access immediately. No text is sent.</p>
+            <p className="small">{person.displayName} loses access immediately. No email is sent.</p>
             <SubmitButton className="button danger" pendingLabel="Removing…">
               Remove {person.displayName}
             </SubmitButton>
@@ -105,7 +104,7 @@ export default async function PeoplePage({
     >
       <p className="kicker">{loaded.page.patientFirstName}</p>
       <h1>People</h1>
-      <p className="muted">Followers can't see this list or each other's numbers.</p>
+      <p className="muted">Followers can't see this list or each other's email addresses.</p>
       {error && (
         <p className="banner-error" role="alert">
           {error}
@@ -117,7 +116,7 @@ export default async function PeoplePage({
         <h2>Add someone</h2>
         <p className="small muted">
           Wider circle is selected on purpose. You can move someone to the inner circle later. Moving them back can't
-          unsend what they already read. Texting isn't on yet, so send them the link yourself.
+          unsend what they already read. Nothing is sent when you add someone, so send them the link yourself.
         </p>
         <form action={addPersonAction} className="stack">
           <input type="hidden" name="slug" value={slug} />
@@ -126,8 +125,8 @@ export default async function PeoplePage({
             <input name="name" required maxLength={40} autoComplete="name" />
           </label>
           <label className="field">
-            Mobile number
-            <input name="phone" type="tel" inputMode="tel" autoComplete="tel" required />
+            Email address
+            <input name="email" type="email" inputMode="email" autoComplete="off" required />
           </label>
           <label className="field">
             Tier
@@ -146,8 +145,8 @@ export default async function PeoplePage({
           <form action={addPeopleAction} className="stack">
             <input type="hidden" name="slug" value={slug} />
             <label className="field">
-              <span className="quiet">One person per line: Name, phone</span>
-              <textarea name="list" required placeholder={"Sam Rivera, 555-200-0002\nJo Patel, 555-200-0003"} />
+              <span className="quiet">One person per line: Name, email</span>
+              <textarea name="list" required placeholder={"Sam Rivera, sam@example.com\nJo Patel, jo@example.com"} />
             </label>
             <label className="field">
               Tier for everyone in the list

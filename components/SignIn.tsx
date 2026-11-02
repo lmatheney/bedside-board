@@ -1,105 +1,68 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { requestCode, verifyCode } from "@/lib/actions";
-import { formatPhone, normalizePhone } from "@/lib/phone";
+import { requestSignInLink } from "@/lib/actions";
 
-export function SignIn({ slug }: { slug: string }) {
-  const router = useRouter();
-  const [phone, setPhone] = useState("");
-  const [code, setCode] = useState("");
-  const [step, setStep] = useState<"phone" | "code">("phone");
-  const [error, setError] = useState<string | null>(null);
+export function SignIn({ slug, error: initialError }: { slug: string; error?: string }) {
+  const [email, setEmail] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(initialError ?? null);
   const [pending, setPending] = useState(false);
-  const pretty = normalizePhone(phone);
 
-  async function sendCode(event: React.FormEvent) {
+  async function sendLink(event: React.FormEvent) {
     event.preventDefault();
     setPending(true);
     setError(null);
-    const result = await requestCode(slug, phone);
+    const result = await requestSignInLink(slug, email);
     setPending(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    setStep("code");
-  }
-
-  async function checkCode(event: React.FormEvent) {
-    event.preventDefault();
-    setPending(true);
-    setError(null);
-    const result = await verifyCode(slug, phone, code);
-    setPending(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    router.refresh();
+    setSent(true);
   }
 
   return (
     <div className="stack">
       <h1>Sign in</h1>
-      {step === "phone" ? (
-        <form className="stack" onSubmit={sendCode}>
-          {error && (
-            <p className="banner-error" role="alert">
-              {error}
-            </p>
-          )}
-          <label className="field">
-            Mobile number
-            <input
-              name="phone"
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              required
-              value={phone}
-              onChange={(event) => setPhone(event.target.value)}
-            />
-          </label>
-          <button className="button primary" disabled={pending}>
-            {pending ? "Sending…" : "Text me a code"}
-          </button>
-        </form>
-      ) : (
-        <form className="stack" onSubmit={checkCode}>
-          {error && (
-            <p className="banner-error" role="alert">
-              {error}
-            </p>
-          )}
-          <p>Code for {pretty ? formatPhone(pretty) : phone}</p>
-          <label className="field">
-            6-digit code
-            <input
-              name="code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              pattern="\d{6}"
-              maxLength={6}
-              required
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-            />
-          </label>
-          <button className="button primary" disabled={pending}>
-            {pending ? "Checking…" : "Continue"}
-          </button>
+      {sent ? (
+        <div className="stack">
+          <p>
+            We emailed a sign-in link to <strong>{email.trim()}</strong>. Open it in this same browser.
+          </p>
+          <p className="small muted">It can take a minute. Check spam if you don't see it.</p>
           <button
             className="button ghost"
             type="button"
             onClick={() => {
-              setStep("phone");
-              setCode("");
+              setSent(false);
               setError(null);
             }}
           >
-            Use a different number
+            Use a different email
+          </button>
+        </div>
+      ) : (
+        <form className="stack" onSubmit={sendLink}>
+          {error && (
+            <p className="banner-error" role="alert">
+              {error}
+            </p>
+          )}
+          <label className="field">
+            Email address
+            <input
+              name="email"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </label>
+          <button className="button primary" disabled={pending}>
+            {pending ? "Sending…" : "Email me a sign-in link"}
           </button>
         </form>
       )}

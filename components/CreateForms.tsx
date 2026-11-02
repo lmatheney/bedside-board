@@ -1,49 +1,31 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createCarePage, openExistingPage, startCarePage } from "@/lib/actions";
-import { formatPhone, normalizePhone } from "@/lib/phone";
+import { openExistingPage, startCarePage } from "@/lib/actions";
 import type { FormState } from "@/lib/types";
 
 const empty: FormState = { error: "" };
 
-function StartPage() {
-  const router = useRouter();
-  const [step, setStep] = useState<"details" | "code">("details");
+function StartPage({ initialError }: { initialError?: string }) {
+  const [sent, setSent] = useState(false);
   const [patient, setPatient] = useState("");
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [setupCode, setSetupCode] = useState("");
-  const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
   const [pending, setPending] = useState(false);
-  const pretty = normalizePhone(phone);
 
-  async function sendCode(event: React.FormEvent) {
+  async function sendLink(event: React.FormEvent) {
     event.preventDefault();
     setPending(true);
     setError(null);
-    const result = await startCarePage({ patient, name, phone, setupCode });
+    const result = await startCarePage({ patient, name, email, setupCode });
     setPending(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    setStep("code");
-  }
-
-  async function create(event: React.FormEvent) {
-    event.preventDefault();
-    setPending(true);
-    setError(null);
-    const result = await createCarePage({ patient, name, phone, setupCode, code });
-    if (!result.ok) {
-      setPending(false);
-      setError(result.error);
-      return;
-    }
-    router.push(`/p/${result.slug}`);
+    setSent(true);
   }
 
   return (
@@ -54,8 +36,26 @@ function StartPage() {
           {error}
         </p>
       )}
-      {step === "details" ? (
-        <form onSubmit={sendCode} className="stack">
+      {sent ? (
+        <div className="stack">
+          <p>
+            We emailed a link to <strong>{email.trim()}</strong>. Open it in this same browser and your page will be
+            created.
+          </p>
+          <p className="small muted">It can take a minute. Check spam if you don't see it.</p>
+          <button
+            className="button ghost"
+            type="button"
+            onClick={() => {
+              setSent(false);
+              setError(null);
+            }}
+          >
+            Back
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={sendLink} className="stack">
           <label className="field">
             Patient's first name
             <input
@@ -79,15 +79,15 @@ function StartPage() {
             />
           </label>
           <label className="field">
-            Your mobile number
+            Your email address
             <input
-              name="phone"
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
+              name="email"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
               required
-              value={phone}
-              onChange={(event) => setPhone(event.target.value)}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
             />
           </label>
           <label className="field">
@@ -103,55 +103,24 @@ function StartPage() {
             />
           </label>
           <button className="button primary" disabled={pending}>
-            {pending ? "Sending…" : "Text me a code"}
+            {pending ? "Sending…" : "Email me a link"}
           </button>
           <p className="small muted">
             You'll be the owner. Add the people at the bedside as mods, and everyone else as followers. When you
             aren't sure how close someone is, start them on the wider circle.
           </p>
         </form>
-      ) : (
-        <form onSubmit={create} className="stack">
-          <p>Code for {pretty ? formatPhone(pretty) : phone}</p>
-          <label className="field">
-            6-digit code
-            <input
-              name="code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              pattern="\d{6}"
-              maxLength={6}
-              required
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-            />
-          </label>
-          <button className="button primary" disabled={pending}>
-            {pending ? "Creating…" : "Create the page"}
-          </button>
-          <button
-            className="button ghost"
-            type="button"
-            onClick={() => {
-              setStep("details");
-              setCode("");
-              setError(null);
-            }}
-          >
-            Back
-          </button>
-        </form>
       )}
     </section>
   );
 }
 
-export function CreateForms() {
+export function CreateForms({ error }: { error?: string }) {
   const [opened, open, opening] = useActionState(openExistingPage, empty);
 
   return (
     <div className="stack">
-      <StartPage />
+      <StartPage initialError={error} />
       <section className="card stack">
         <h2>I have a link</h2>
         {opened.error && (

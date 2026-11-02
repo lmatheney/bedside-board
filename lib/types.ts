@@ -25,7 +25,7 @@ export type CurrentMember = {
 };
 
 export type ListedMember = CurrentMember & {
-  phone: string;
+  email: string;
   createdAt: string;
 };
 

@@ -253,7 +253,7 @@ legend { font-weight: 700; padding: 0; margin-bottom: 0.45rem; }
 
 .person { border-top: 1px solid var(--line); padding: 0.85rem 0; }
 .person h3 { margin: 0; }
-.person .phone { color: var(--muted); margin: 0.15rem 0 0.55rem; }
+.person .email { color: var(--muted); margin: 0.15rem 0 0.55rem; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .row-actions select { width: auto; min-width: 9rem; }
 .row-actions .button { width: auto; }

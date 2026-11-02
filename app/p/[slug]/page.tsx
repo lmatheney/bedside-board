@@ -22,7 +22,7 @@ export default async function CarePage({
   if (loaded.kind === "signed-out") {
     return (
       <Shell>
-        <SignIn slug={slug} />
+        <SignIn slug={slug} error={query.error} />
       </Shell>
     );
   }
